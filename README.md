@@ -1,24 +1,9 @@
-# datastar_gleam
+# Datastar example with Gleam
 
-[![Package Version](https://img.shields.io/hexpm/v/datastar_gleam)](https://hex.pm/packages/datastar_gleam)
-[![Hex Docs](https://img.shields.io/badge/hex-docs-ffaff3)](https://hexdocs.pm/datastar_gleam/)
+1. start server:
 
-```sh
-gleam add datastar_gleam@1
-```
 ```gleam
-import datastar_gleam
-
-pub fn main() -> Nil {
-  // TODO: An example of the project in use
-}
+gleam run
 ```
 
-Further documentation can be found at <https://hexdocs.pm/datastar_gleam>.
-
-## Development
-
-```sh
-gleam run   # Run the project
-gleam test  # Run the tests
-```
+2. open browser and visit <http://localhost:8000>
