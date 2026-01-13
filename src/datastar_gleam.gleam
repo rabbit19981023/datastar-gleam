@@ -2,6 +2,7 @@ import ewe.{type Request, type Response, type SSEEvent}
 import gleam/erlang/process.{type Subject}
 import gleam/http.{Get}
 import gleam/http/request
+import gleam/int
 import gleam/list
 import gleam/option.{None}
 import gleam/otp/actor
@@ -123,6 +124,31 @@ fn pubsub_handler(
   }
 }
 
+fn send_event(
+  repeat: Int,
+  pubsub: Subject(PubsubMsg),
+  client: Subject(SSEEvent),
+) {
+  let patch =
+    ewe.event(
+      "elements "
+      <> "<div id=\"hal-sse\">"
+      <> "Times: "
+      <> int.to_string(repeat)
+      <> ". I’m sorry, Dave. I’m afraid I can’t do that. (text/event-stream)</div>",
+    )
+    |> ewe.event_name("datastar-patch-elements")
+
+  process.send(pubsub, Send(client, patch))
+
+  let delay = 800
+  process.sleep(delay)
+  case repeat {
+    0 -> Nil
+    _ -> send_event(repeat - 1, pubsub, client)
+  }
+}
+
 fn get_hal_sse(req: Request, pubsub: Subject(PubsubMsg)) -> Response {
   ewe.sse(
     req,
@@ -134,13 +160,7 @@ fn get_hal_sse(req: Request, pubsub: Subject(PubsubMsg)) -> Response {
         "SSE connection opened: " <> string.inspect(process.self()),
       )
 
-      let patch =
-        ewe.event(
-          "elements <div id=\"hal-sse\">I’m sorry, Dave. I’m afraid I can’t do that. (text/event-stream)</div>",
-        )
-        |> ewe.event_name("datastar-patch-elements")
-
-      process.send(pubsub, Send(client, patch))
+      process.spawn(fn() { send_event(5, pubsub, client) })
 
       client
     },
