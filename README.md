@@ -2,7 +2,7 @@
 
 1. start server:
 
-```gleam
+```bash
 gleam run
 ```
 

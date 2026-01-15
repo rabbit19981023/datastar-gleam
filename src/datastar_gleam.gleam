@@ -124,31 +124,6 @@ fn pubsub_handler(
   }
 }
 
-fn send_event(
-  repeat: Int,
-  pubsub: Subject(PubsubMsg),
-  client: Subject(SSEEvent),
-) {
-  let patch =
-    ewe.event(
-      "elements "
-      <> "<div id=\"hal-sse\">"
-      <> "Times: "
-      <> int.to_string(repeat)
-      <> ". I’m sorry, Dave. I’m afraid I can’t do that. (text/event-stream)</div>",
-    )
-    |> ewe.event_name("datastar-patch-elements")
-
-  process.send(pubsub, Send(client, patch))
-
-  let delay = 800
-  process.sleep(delay)
-  case repeat {
-    0 -> Nil
-    _ -> send_event(repeat - 1, pubsub, client)
-  }
-}
-
 fn get_hal_sse(req: Request, pubsub: Subject(PubsubMsg)) -> Response {
   ewe.sse(
     req,
@@ -160,6 +135,7 @@ fn get_hal_sse(req: Request, pubsub: Subject(PubsubMsg)) -> Response {
         "SSE connection opened: " <> string.inspect(process.self()),
       )
 
+      // send events concurrently to avoid blocking SSE init connection
       process.spawn(fn() { send_event(5, pubsub, client) })
 
       client
@@ -185,4 +161,29 @@ fn get_hal_sse(req: Request, pubsub: Subject(PubsubMsg)) -> Response {
       )
     },
   )
+}
+
+fn send_event(
+  repeat: Int,
+  pubsub: Subject(PubsubMsg),
+  client: Subject(SSEEvent),
+) {
+  let patch =
+    ewe.event(
+      "elements "
+      <> "<div id=\"hal-sse\">"
+      <> "Times: "
+      <> int.to_string(repeat)
+      <> ". I’m sorry, Dave. I’m afraid I can’t do that. (text/event-stream)</div>",
+    )
+    |> ewe.event_name("datastar-patch-elements")
+
+  process.send(pubsub, Send(client, patch))
+
+  let delay = 800
+  process.sleep(delay)
+  case repeat {
+    0 -> Nil
+    _ -> send_event(repeat - 1, pubsub, client)
+  }
 }
