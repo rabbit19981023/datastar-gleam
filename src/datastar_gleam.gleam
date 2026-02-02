@@ -3,9 +3,7 @@ import gleam/erlang/process.{type Subject}
 import gleam/http.{Get}
 import gleam/http/request
 import gleam/int
-import gleam/list
 import gleam/option.{None}
-import gleam/otp/actor
 import gleam/otp/static_supervisor.{type Supervisor} as supervisor
 import gleam/otp/supervision.{type ChildSpecification}
 import gleam/string
@@ -16,32 +14,29 @@ pub fn main() -> Nil {
   logging.configure()
   logging.set_level(logging.Info)
 
-  let pubsub = process.new_name("pubsub")
-
   let assert Ok(_) =
     supervisor.new(supervisor.OneForAll)
-    |> supervisor.add(web_server(pubsub))
-    |> supervisor.add(pubsub_worker(pubsub))
+    |> supervisor.add(web_server())
     |> supervisor.start()
 
   process.sleep_forever()
 }
 
-fn web_server(pubsub: process.Name(PubsubMsg)) -> ChildSpecification(Supervisor) {
-  request_handler(_, process.named_subject(pubsub))
+fn web_server() -> ChildSpecification(Supervisor) {
+  request_handler
   |> ewe.new()
   |> ewe.bind_all()
   |> ewe.listening(port: 8000)
   |> ewe.supervised()
 }
 
-fn request_handler(req: Request, pubsub: Subject(PubsubMsg)) -> Response {
+fn request_handler(req: Request) -> Response {
   use <- log_request(req)
 
   case req.method, request.path_segments(req) {
     Get, [] -> serve_index()
     Get, ["hal-html"] -> get_hal_html()
-    Get, ["hal-sse"] -> get_hal_sse(req, pubsub)
+    Get, ["hal-sse"] -> get_hal_sse(req)
     _, _ -> send_not_found()
   }
 }
@@ -59,84 +54,17 @@ fn get_hal_html() -> Response {
   )
 }
 
-type PubsubMsg {
-  Subscribe(client: Subject(SSEEvent))
-  Send(client: Subject(SSEEvent), event: SSEEvent)
-  Unsubscribe(client: Subject(SSEEvent))
-}
-
-fn pubsub_worker(
-  pubsub: process.Name(PubsubMsg),
-) -> ChildSpecification(Subject(PubsubMsg)) {
-  let init_clients = []
-  use <- supervision.worker
-
-  actor.new(init_clients)
-  |> actor.named(pubsub)
-  |> actor.on_message(pubsub_handler)
-  |> actor.start()
-}
-
-fn pubsub_handler(
-  clients: List(Subject(SSEEvent)),
-  msg: PubsubMsg,
-) -> actor.Next(List(Subject(SSEEvent)), PubsubMsg) {
-  case msg {
-    Subscribe(client) -> {
-      let assert Ok(pid) = process.subject_owner(client)
-
-      logging.log(
-        logging.Info,
-        "Client " <> string.inspect(pid) <> " connected",
-      )
-
-      actor.continue([client, ..clients])
-    }
-
-    Send(client, event) -> {
-      let assert Ok(pid) = process.subject_owner(client)
-
-      process.send(client, event)
-
-      logging.log(
-        logging.Info,
-        "Sent event `"
-          <> string.inspect(event)
-          <> "` to client "
-          <> string.inspect(pid),
-      )
-
-      actor.continue(clients)
-    }
-
-    Unsubscribe(client) -> {
-      let assert Ok(pid) = process.subject_owner(client)
-
-      logging.log(
-        logging.Info,
-        "Client " <> string.inspect(pid) <> " disconnected",
-      )
-
-      // remove unsubscribed client from list
-      list.filter(clients, fn(subscribed) { subscribed != client })
-      |> actor.continue()
-    }
-  }
-}
-
-fn get_hal_sse(req: Request, pubsub: Subject(PubsubMsg)) -> Response {
+fn get_hal_sse(req: Request) -> Response {
   ewe.sse(
     req,
     on_init: fn(client) {
-      process.send(pubsub, Subscribe(client))
-
       logging.log(
         logging.Info,
         "SSE connection opened: " <> string.inspect(process.self()),
       )
 
       // send events concurrently to avoid blocking SSE init connection
-      process.spawn(fn() { send_event(5, pubsub, client) })
+      process.spawn(fn() { send_event_loop(5, client) })
 
       client
     },
@@ -152,9 +80,7 @@ fn get_hal_sse(req: Request, pubsub: Subject(PubsubMsg)) -> Response {
         }
       }
     },
-    on_close: fn(_conn, client) {
-      process.send(pubsub, Unsubscribe(client))
-
+    on_close: fn(_conn, _client) {
       logging.log(
         logging.Info,
         "SSE connection closed: " <> string.inspect(process.self()),
@@ -163,11 +89,7 @@ fn get_hal_sse(req: Request, pubsub: Subject(PubsubMsg)) -> Response {
   )
 }
 
-fn send_event(
-  repeat: Int,
-  pubsub: Subject(PubsubMsg),
-  client: Subject(SSEEvent),
-) {
+fn send_event_loop(repeat: Int, client: Subject(SSEEvent)) {
   let patch =
     ewe.event(
       "elements "
@@ -178,12 +100,12 @@ fn send_event(
     )
     |> ewe.event_name("datastar-patch-elements")
 
-  process.send(pubsub, Send(client, patch))
+  process.send(client, patch)
 
   let delay = 800
   process.sleep(delay)
   case repeat {
     0 -> Nil
-    _ -> send_event(repeat - 1, pubsub, client)
+    _ -> send_event_loop(repeat - 1, client)
   }
 }
